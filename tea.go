@@ -1519,8 +1519,6 @@ func (p *Program) Printf(template string, args ...any) {
 // startRenderer starts the renderer.
 func (p *Program) startRenderer() {
 	framerate := time.Second / time.Duration(p.fps)
-	// Stop ticking after about half a second of frames with nothing to draw.
-	idleFrames := max(p.fps/2, 1)
 
 	// Each run of the renderer gets its own ticker, so a goroutine that is
 	// still exiting can't stop the ticker of the next one.
@@ -1540,6 +1538,8 @@ func (p *Program) startRenderer() {
 			parked  bool      // whether the ticker is stopped
 			realign bool      // whether the ticker runs a shortened interval
 			last    time.Time // when the ticker last fired
+			drawn   time.Time // when a frame was last drawn
+			streak  int       // frames drawn in a row, each one frame after the one before
 		)
 		for {
 			select {
@@ -1563,10 +1563,19 @@ func (p *Program) startRenderer() {
 				}
 				_ = p.flush()
 				if drew, _ := p.renderer.flush(false); drew {
-					idle = 0
-				} else if idle++; idle >= idleFrames {
-					// Nothing is changing. Stop waking up every frame until
-					// there is something to draw, see [Program.wakeRenderer].
+					if !drawn.IsZero() && last.Sub(drawn) < 3*framerate/2 {
+						streak++
+					} else if streak < 2 || idle > 1 {
+						streak = 0
+					}
+					drawn, idle = last, 0
+				} else {
+					idle++
+				}
+				// A restart costs about as much as an empty tick: stop right
+				// after drawing, or while animating, on the second empty frame
+				// in a row. See [Program.wakeRenderer].
+				if animating := streak >= 2; !animating || idle > 1 {
 					ticker.Stop()
 					parked = true
 				}

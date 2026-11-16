@@ -3,6 +3,7 @@ package tea
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -135,8 +136,7 @@ func newParkHarness(t *testing.T, fps int, opts ...ProgramOption) *parkHarness {
 func (h *parkHarness) waitParked() {
 	h.t.Helper()
 
-	// Parked means no tick for well over a frame. The ticker runs for about
-	// half a second of unchanged frames before it stops.
+	// Parked means no tick for well over a frame.
 	quiet := 6 * h.frame
 	deadline := time.Now().Add(10 * time.Second)
 	n := h.r.count()
@@ -213,6 +213,31 @@ func TestRendererStopsTickingWhenIdle(t *testing.T) {
 	time.Sleep(time.Second)
 	if ticks := h.r.count() - n; ticks != 0 {
 		t.Errorf("an idle program ticked %d times in a second, want 0", ticks)
+	}
+}
+
+// A view that changes now and then.
+func TestRendererParksBetweenChanges(t *testing.T) {
+	t.Parallel()
+
+	const (
+		changes = 5
+		gap     = 100 * time.Millisecond
+	)
+	h := newParkHarness(t, 60)
+	h.waitOutput(0, 5*time.Second, "first")
+	h.waitParked()
+
+	n := h.r.count()
+	for i := range changes {
+		h.setView(func(v *View) { v.Content = fmt.Sprintf("change %d", i) })
+		time.Sleep(gap)
+	}
+	h.waitParked()
+	// One tick per change, with room for a slow machine. A ticker that
+	// keeps running between changes ticks about 30 times here.
+	if ticks, most := h.r.count()-n, 2*changes; ticks > most {
+		t.Errorf("%d changes %v apart cost %d ticks, want at most %d", changes, gap, ticks, most)
 	}
 }
 
